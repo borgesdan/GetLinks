@@ -9,11 +9,11 @@ namespace GetLinks.Api.Services
     {
         readonly string _pattern = @"\b(?:href|src)\s*=\s*(['""]?)(.*?)\1";
 
-        private bool IsValidUrl(string? url)
+        private static bool IsValidUrl(string? url)
         {
             if(!string.IsNullOrWhiteSpace(url) && Uri.TryCreate(url, UriKind.Absolute, out Uri? uriResult))
             {
-                return uriResult.Scheme == Uri.UriSchemeHttp;
+                return uriResult.Scheme == Uri.UriSchemeHttp || uriResult.Scheme == Uri.UriSchemeHttps;
             }
 
             return false;
