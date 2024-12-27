@@ -1,38 +1,42 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using GetLinks.Api.Models;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using System.Text.RegularExpressions;
 
 namespace GetLinks.Api.Services
 {
-    public class SearchPostContentRequest
-    {
-        public string? Content { get; set; }
-        public bool GetOnlyWithExtensions { get; set; } = true;
-    }
-
-    public class SearchPostRequest
-    {
-        public string? Url { get; set; }
-        public bool GetOnlyWithExtensions { get; set; } = true;
-    }
-
-    public class SearchPostResponse
-    {
-        public ICollection<string> Urls { get; set; } = [];
-    }
-
     public class LinksService
     {
-       // readonly string _pattern = @"<a[^>]*\shref\s*=\s*(['""]?)(.*?)\1[^>]*>";
         readonly string _pattern = @"\b(?:href|src)\s*=\s*(['""]?)(.*?)\1";
+
+        private bool IsValidUrl(string? url)
+        {
+            if(!string.IsNullOrWhiteSpace(url) && Uri.TryCreate(url, UriKind.Absolute, out Uri? uriResult))
+            {
+                return uriResult.Scheme == Uri.UriSchemeHttp;
+            }
+
+            return false;
+        }
 
         public async Task<IActionResult> SearchByUrl(SearchPostRequest request)
         {
-            if (string.IsNullOrWhiteSpace(request.Url))
-                return new BadRequestObjectResult("The request URL is empty or null.");
+            if (!IsValidUrl(request.Url))
+            {
+                return new BadRequestObjectResult("The request URL is empty, null, or not valid.");
+            }
 
-            using var client = new HttpClient();
-            var result = await client.GetAsync(request.Url);            
-            var input = await result.Content.ReadAsStringAsync();
+            string input = "";
+            try
+            {
+                using var client = new HttpClient();
+                var result = await client.GetAsync(request.Url);
+                input = await result.Content.ReadAsStringAsync();
+            }
+            catch
+            {
+                return new BadRequestObjectResult("The request URL is not valid.");
+            }           
 
             var response = new SearchPostResponse();
 
@@ -43,7 +47,7 @@ namespace GetLinks.Api.Services
 
             var matches = Regex.Matches(input, _pattern, RegexOptions.IgnoreCase);
 
-            var urls = await Task.Factory.StartNew(() => ProcessMatches(matches, request.Url!, request.GetOnlyWithExtensions));
+            var urls = await Task.Factory.StartNew(() => ProcessMatches(matches, request.Url!, request.GetOnlyWithExtensions, request.Extensions));
             response.Urls = urls;
 
             return new OkObjectResult(response);
@@ -63,46 +67,60 @@ namespace GetLinks.Api.Services
 
             var matches = Regex.Matches(request.Content, _pattern, RegexOptions.IgnoreCase);
 
-            var urls = await Task.Factory.StartNew(() => ProcessMatches(matches, null, request.GetOnlyWithExtensions));
+            var urls = await Task.Factory.StartNew(() => ProcessMatches(matches, null, request.GetOnlyWithExtensions, request.Extensions));
             response.Urls = urls;
 
             return new OkObjectResult(response);
         }
         
         
-        private static List<string> ProcessMatches(MatchCollection matches, string? baseUrl, bool onlyWithExtensions)
+        private static List<string> ProcessMatches(MatchCollection matches, string? baseUrl, bool onlyWithExtensions, IEnumerable<string>? extensions)
         {
             List<string> results = [];
+            bool hasExtensions = extensions != null && extensions.Any();            
 
             foreach (Match match in matches)
             {
                 var link = match.Groups[2].Value;
 
-                if (onlyWithExtensions && string.IsNullOrWhiteSpace(Path.GetExtension(link)))
-                    continue;
-
-                var baseIsNull = baseUrl == null;                
-
-                if (!baseIsNull && (link.StartsWith('#') || link.StartsWith('/')))
+                if (onlyWithExtensions)
                 {
-                    if (link.StartsWith('/'))
-                        link = link.Remove(0, 1);
+                    var extension = Path.GetExtension(link);
 
-                    link = Path.Combine(baseUrl!, link);
+                    if (string.IsNullOrWhiteSpace(extension) || (hasExtensions && !extensions!.Contains(extension)))
+                        continue;
                 }
-                else
-                {
-                    var options = new UriCreationOptions();
-                    var created = Uri.TryCreate(link, options, out Uri? uri);
 
-                    if (created && !uri!.IsAbsoluteUri && baseIsNull)
-                        link = Path.Combine(baseUrl!, link);
-                }
+                link = ProcessLink(link, baseUrl);
 
                 results.Add(link);
             }
 
             return results;
+        }
+
+        private static string ProcessLink(string link, string? baseUrl)
+        {
+            var baseUrlIsNull = baseUrl == null;
+
+            if (!baseUrlIsNull && (link.StartsWith('#') || link.StartsWith('/')))
+            {
+                if (link.StartsWith('/'))
+                    link = link.Remove(0, 1);
+
+                link = Path.Combine(baseUrl!, link);
+            }
+            else
+            {
+                var options = new UriCreationOptions();
+                var created = Uri.TryCreate(link, options, out Uri? uri);
+                var isAbsoluteUri = created && uri!.IsAbsoluteUri;
+
+                if (!isAbsoluteUri && !baseUrlIsNull)
+                    link = Path.Combine(baseUrl!, link);
+            }
+
+            return link;
         }
     }    
 }

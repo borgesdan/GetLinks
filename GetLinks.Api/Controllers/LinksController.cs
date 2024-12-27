@@ -1,4 +1,5 @@
-﻿using GetLinks.Api.Services;
+﻿using GetLinks.Api.Models;
+using GetLinks.Api.Services;
 using Microsoft.AspNetCore.Mvc;
 
 namespace GetLinks.Api.Controllers
